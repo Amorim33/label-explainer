@@ -1,0 +1,17 @@
+{
+  "name": "label-explainer",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^1.2.19",
+    "@clack/prompts": "^0.11.0",
+    "ai": "^4.3.16",
+    "zod": "^3.25.67"
+  }
+}
