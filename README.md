@@ -1,7 +1,9 @@
+<img src="https://github.com/user-attachments/assets/efad3311-43d9-4342-923e-84ee37915e4d" width="200" />
+
 # 🪄 Label Explainer CLI
 
 A modern CLI that adds **natural language explanations** to labeled datasets using Google Gemini.
-Primarily designed to generate explanations for the **UStanceBR** corpus — a stance detection dataset of tweets annotated with **"for"** or **"against"** labels across multiple political targets.
+Primarily designed to generate explanations for the [**UStanceBR** corpus](https://arxiv.org/abs/2312.06374) — a collection of stance detection datasets, composed by tweets annotated with **"for"** or **"against"** labels across multiple political targets.
 
 ## 🚀 Getting Started
 
