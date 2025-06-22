@@ -1,4 +1,4 @@
-import { intro, outro, select, text } from "@clack/prompts";
+import { intro, outro, select, spinner, text } from "@clack/prompts";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import fs from "fs";
@@ -6,6 +6,8 @@ import { generateText } from "ai";
 
 const model = google("gemini-2.0-flash-001");
 const BATCH_SIZE = 100;
+
+const spin = spinner();
 
 const validateWithZod =
   (
@@ -132,7 +134,9 @@ ${batch.map(({ text, label }) => `${text}\t${label}`).join("\n")}`,
       return text;
     });
 
+    spin.start("Generating explanations...");
     const results = await Promise.all(promises);
+    spin.stop();
 
     fs.writeFileSync(`results-${target}-${language}.tsv`, results.join("\n"));
 
