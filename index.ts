@@ -1,10 +1,11 @@
-import { intro, select, text } from "@clack/prompts";
+import { intro, outro, select, text } from "@clack/prompts";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import fs from "fs";
 import { generateText } from "ai";
 
 const model = google("gemini-2.0-flash-001");
+const BATCH_SIZE = 100;
 
 const validateWithZod =
   (
@@ -53,13 +54,24 @@ switch (action) {
       })
     );
 
+    const fileFormat = z.enum(["csv", "tsv"]).parse(
+      await select({
+        message: "Enter the file format.",
+        options: [
+          { value: "csv", label: "CSV" },
+          { value: "tsv", label: "TSV" },
+        ],
+      })
+    );
+
     const dataset = z
       .string()
       .transform((value) => fs.readFileSync(value, "utf-8"))
       .parse(
         await text({
-          message:
-            "Enter the dataset path.\n The dataset should be a ';'-separated file.",
+          message: `Enter the dataset path.\n The dataset should be a ${
+            fileFormat === "csv" ? "," : "\\t"
+          }-separated file.`,
           validate: validateWithZod(
             z
               .string()
@@ -72,10 +84,10 @@ switch (action) {
     let lineCount = 0;
     let batchIndex = 0;
     for (const line of dataset.split("\n")) {
-      const [text, label] = line.split(";");
+      const [text, label] = line.split(fileFormat === "csv" ? "," : "\t");
       batches[batchIndex].push({ text, label });
       lineCount++;
-      if (lineCount === 500) {
+      if (lineCount === BATCH_SIZE) {
         batchIndex++;
         batches.push([]);
         lineCount = 0;
@@ -90,7 +102,7 @@ switch (action) {
 
 **Input:** You will be provided with a dataset of tweets, each with a pre-assigned stance label ("for" or "against") towards a given target.
 
-**Output:** Your task is to generate a ';'-separated output with the following columns: \`text\`, \`label\`, and \`label_explanation\`.
+**Output:** Your task is to generate a TSV (tab-separated values) output with the following columns: \`text\`, \`label\`, and \`label_explanation\`.
 
 **Instructions:**
 
@@ -108,13 +120,13 @@ For each tweet, carefully analyze the text and its relationship with the designa
 5.  **Return the explanation in ${language}.**
 
 **Example of Expected Output:**
-text;label;label_explanation
-eu odeio tudo que o governo Bolsonaro é! não vai ter um dia sequer da minha vida que eu não esteja desejando esse cara fora do comando do país;against;O texto expressa sentimentos negativos explícitos, como 'odeio', e um desejo claro de que o alvo, 'o governo Bolsonaro', seja removido do poder ('desejando esse cara fora do comando do país'), o que demonstra uma forte oposição.
-um dos vídeos mais engraçados é o do Bolsonaro fazendo flexão KAKSKSKAKSKAKSKAKSS;against;O texto utiliza o humor e a risada ('KAKSKSKAKSKAKSKAKSS') para se referir a uma ação do alvo (Bolsonaro). Neste contexto, o ato de achar 'engraçado' um vídeo do presidente sugere zombaria ou ridicularização, em vez de apoio, caracterizando uma postura contrária.
-Eu tomei multa demais esse ano pqp... Aí agora mudou a lei né? Você vê que tá fazendo merda na vida quando uma lei aprovada pelo Bolsonaro te favorece! Peço perdão desde já viu;for;Apesar do tom irônico e da aparente relutância, o autor admite explicitamente que uma 'lei aprovada pelo Bolsonaro' o favorece. A postura é considerada 'a favor' porque o texto afirma que a ação do alvo (a lei) é benéfica para o autor, independentemente de seus sentimentos pessoais sobre o político.
+text\tlabel\tlabel_explanation
+eu odeio tudo que o governo Bolsonaro é! não vai ter um dia sequer da minha vida que eu não esteja desejando esse cara fora do comando do país\tagainst\tO texto expressa sentimentos negativos explícitos, como 'odeio', e um desejo claro de que o alvo, 'o governo Bolsonaro', seja removido do poder ('desejando esse cara fora do comando do país'), o que demonstra uma forte oposição.
+um dos vídeos mais engraçados é o do Bolsonaro fazendo flexão KAKSKSKAKSKAKSKAKSS\tagainst\tO texto utiliza o humor e a risada ('KAKSKSKAKSKAKSKAKSS') para se referir a uma ação do alvo (Bolsonaro). Neste contexto, o ato de achar 'engraçado' um vídeo do presidente sugere zombaria ou ridicularização, em vez de apoio, caracterizando uma postura contrária.
+Eu tomei multa demais esse ano pqp... Aí agora mudou a lei né? Você vê que tá fazendo merda na vida quando uma lei aprovada pelo Bolsonaro te favorece! Peço perdão desde já viu\tfor\tApesar do tom irônico e da aparente relutância, o autor admite explicitamente que uma 'lei aprovada pelo Bolsonaro' o favorece. A postura é considerada 'a favor' porque o texto afirma que a ação do alvo (a lei) é benéfica para o autor, independentemente de seus sentimentos pessoais sobre o político.
 
 **Input:**
-${batch.map(({ text, label }) => `${text};${label}`).join("\n")}`,
+${batch.map(({ text, label }) => `${text}\t${label}`).join("\n")}`,
       });
 
       return text;
@@ -122,7 +134,7 @@ ${batch.map(({ text, label }) => `${text};${label}`).join("\n")}`,
 
     const results = await Promise.all(promises);
 
-    fs.writeFileSync(`results-${target}-${language}.csv`, results.join("\n"));
+    fs.writeFileSync(`results-${target}-${language}.tsv`, results.join("\n"));
 
     break;
   }
@@ -130,3 +142,5 @@ ${batch.map(({ text, label }) => `${text};${label}`).join("\n")}`,
     throw new Error("Invalid action");
   }
 }
+
+outro("Done! 🎉");
