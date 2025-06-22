@@ -6,6 +6,7 @@ A modern CLI that adds **natural language explanations** to labeled datasets usi
 Primarily designed to generate explanations for the [**UStanceBR** corpus](https://arxiv.org/abs/2312.06374) — a collection of stance detection datasets, composed by tweets annotated with **"for"** or **"against"** labels across multiple political targets.
 
 ## 🚀 Getting Started
+https://github.com/user-attachments/assets/dec28b4c-53fe-455b-9d4d-6e92c953cda3
 
 ### 1. **Install Bun**
 
