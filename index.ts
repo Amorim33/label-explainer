@@ -3,11 +3,51 @@ import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import fs from "fs";
 import { generateText } from "ai";
+import ExcelJS from "exceljs";
 
 const model = google("gemini-2.0-flash-001");
 const BATCH_SIZE = 100;
 
 const spin = spinner();
+
+const readExcelFile = async (filePath: string): Promise<string[]> => {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  const worksheet = workbook.getWorksheet(1);
+
+  const texts: string[] = [];
+  worksheet?.eachRow((row, rowNumber) => {
+    if (rowNumber > 1) {
+      const cellValue = row.getCell(1).value;
+      if (cellValue) {
+        texts.push(cellValue.toString());
+      }
+    }
+  });
+
+  return texts;
+};
+
+const cleanTsvOutput = (text: string): string => {
+  return text.replace(/^```tsv\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
+};
+
+const writeExcelFile = async (filePath: string, data: Array<{ text: string, label: string, explanation: string }>) => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Results');
+
+  worksheet.addRow(['text', 'label', 'label_explanation']);
+
+  data.forEach(row => {
+    worksheet.addRow([row.text, row.label, row.explanation]);
+  });
+
+  worksheet.columns.forEach(column => {
+    column.width = 30;
+  });
+
+  await workbook.xlsx.writeFile(filePath);
+};
 
 const validateWithZod =
   (
@@ -60,37 +100,65 @@ switch (action) {
       })
     );
 
-    const fileFormat = z.enum(["csv", "tsv"]).parse(
+    const fileFormat = z.enum(["csv", "tsv", "xlsx"]).parse(
       await select({
         message: "Enter the file format.",
         options: [
           { value: "csv", label: "CSV" },
           { value: "tsv", label: "TSV" },
+          { value: "xlsx", label: "XLSX (Excel)" },
         ],
       })
     );
 
-    const dataset = z
-      .string()
-      .transform((value) => fs.readFileSync(value, "utf-8"))
-      .parse(
-        await text({
-          message: `Enter the dataset path.\n The dataset should be a ${fileFormat === "csv" ? "," : "\\t"
-            }-separated file.`,
-          validate: validateWithZod(
-            z
-              .string()
-              .refine((value) => fs.existsSync(value), "Dataset does not exist")
-          ),
-        })
-      );
+    const datasetPath = z.string().parse(
+      await text({
+        message: `Enter the dataset path.\n The dataset should be a ${fileFormat === "xlsx"
+          ? "Excel file with text and label columns"
+          : fileFormat === "csv" ? "," : "\\t"
+          }${fileFormat !== "xlsx" ? "-separated file." : "."}`,
+        validate: validateWithZod(
+          z
+            .string()
+            .refine((value) => fs.existsSync(value), "Dataset does not exist")
+        ),
+      })
+    );
+
+    let dataRows: { text: string; label: string }[] = [];
+
+    if (fileFormat === "xlsx") {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(datasetPath);
+      const worksheet = workbook.getWorksheet(1);
+
+      worksheet?.eachRow((row, rowNumber) => {
+        if (rowNumber > 1) {
+          const text = row.getCell(1).value?.toString() || "";
+          const label = row.getCell(3).value?.toString() || "";
+          if (text && label) {
+            dataRows.push({ text, label });
+          }
+        }
+      });
+    } else {
+      const dataset = fs.readFileSync(datasetPath, "utf-8");
+      for (const line of dataset.split("\n")) {
+        if (line.trim()) {
+          const [text, label] = line.split(fileFormat === "csv" ? "," : "\t");
+          if (text && label) {
+            dataRows.push({ text, label });
+          }
+        }
+      }
+    }
 
     const batches: { text: string; label: string }[][] = [[]];
     let lineCount = 0;
     let batchIndex = 0;
-    for (const line of dataset.split("\n")) {
-      const [text, label] = line.split(fileFormat === "csv" ? "," : "\t");
-      batches[batchIndex].push({ text, label });
+
+    for (const row of dataRows) {
+      batches[batchIndex].push(row);
       lineCount++;
       if (lineCount === BATCH_SIZE) {
         batchIndex++;
@@ -141,7 +209,31 @@ ${batch.map(({ text, label }) => `${text}\t${label}`).join("\n")}`,
     const results = await Promise.all(promises);
     spin.stop();
 
-    fs.writeFileSync(`results-${target}-${language}.tsv`, results.join("\n"));
+    const allResults: Array<{ text: string, label: string, explanation: string }> = [];
+
+    for (const batchResult of results) {
+      const cleanedResult = cleanTsvOutput(batchResult);
+      const lines = cleanedResult.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith("text")) {
+          continue;
+        }
+
+        if (line.trim()) {
+          const parts = line.split('\t');
+          if (parts.length >= 3) {
+            allResults.push({
+              text: parts[0],
+              label: parts[1],
+              explanation: parts[2]
+            });
+          }
+        }
+      }
+    }
+
+    await writeExcelFile(`results-${target}-${language}.xlsx`, allResults);
 
     break;
   }
@@ -163,44 +255,58 @@ ${batch.map(({ text, label }) => `${text}\t${label}`).join("\n")}`,
       })
     );
 
-    const fileFormat = z.enum(["csv", "tsv"]).parse(
+    const fileFormat = z.enum(["csv", "tsv", "xlsx"]).parse(
       await select({
         message: "Enter the file format.",
         options: [
           { value: "csv", label: "CSV" },
           { value: "tsv", label: "TSV" },
+          { value: "xlsx", label: "XLSX (Excel)" },
         ],
       })
     );
 
-    const dataset = z
-      .string()
-      .transform((value) => fs.readFileSync(value, "utf-8"))
-      .parse(
-        await text({
-          message: `Enter the dataset path.\n The dataset should be a ${fileFormat === "csv" ? "," : "\\t"
-            }-separated file with only a text column.`,
-          validate: validateWithZod(
-            z
-              .string()
-              .refine((value) => fs.existsSync(value), "Dataset does not exist")
-          ),
-        })
-      );
+    const datasetPath = z.string().parse(
+      await text({
+        message: `Enter the dataset path.\n The dataset should be a ${fileFormat === "xlsx"
+          ? "Excel file with only a text column"
+          : fileFormat === "csv" ? "," : "\\t"
+          }${fileFormat !== "xlsx" ? "-separated file with only a text column." : "."}`,
+        validate: validateWithZod(
+          z
+            .string()
+            .refine((value) => fs.existsSync(value), "Dataset does not exist")
+        ),
+      })
+    );
+
+    let texts: string[] = [];
+
+    if (fileFormat === "xlsx") {
+      texts = await readExcelFile(datasetPath);
+    } else {
+      const dataset = fs.readFileSync(datasetPath, "utf-8");
+      for (const line of dataset.split("\n")) {
+        if (line.trim()) {
+          const text = line.split(fileFormat === "csv" ? "," : "\t")[0];
+          if (text) {
+            texts.push(text);
+          }
+        }
+      }
+    }
 
     const batches: { text: string }[][] = [[]];
     let lineCount = 0;
     let batchIndex = 0;
-    for (const line of dataset.split("\n")) {
-      if (line.trim()) {
-        const text = line.split(fileFormat === "csv" ? "," : "\t")[0];
-        batches[batchIndex].push({ text });
-        lineCount++;
-        if (lineCount === BATCH_SIZE) {
-          batchIndex++;
-          batches.push([]);
-          lineCount = 0;
-        }
+
+    for (const text of texts) {
+      batches[batchIndex].push({ text });
+      lineCount++;
+      if (lineCount === BATCH_SIZE) {
+        batchIndex++;
+        batches.push([]);
+        lineCount = 0;
       }
     }
 
@@ -255,7 +361,31 @@ ${batch.map(({ text }) => text).join("\n")}
     const results = await Promise.all(promises);
     spin.stop();
 
-    fs.writeFileSync(`classified-${target}-${language}.tsv`, results.join("\n"));
+    const allResults: Array<{ text: string, label: string, explanation: string }> = [];
+
+    for (const batchResult of results) {
+      const cleanedResult = cleanTsvOutput(batchResult);
+      const lines = cleanedResult.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith("text")) {
+          continue;
+        }
+
+        if (line.trim()) {
+          const parts = line.split('\t');
+          if (parts.length >= 3) {
+            allResults.push({
+              text: parts[0],
+              label: parts[1],
+              explanation: parts[2]
+            });
+          }
+        }
+      }
+    }
+
+    await writeExcelFile(`classified-${target}-${language}.xlsx`, allResults);
 
     break;
   }
