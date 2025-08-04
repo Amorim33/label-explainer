@@ -16,14 +16,14 @@ const validateWithZod =
       | z.ZodEffects<z.ZodString>
       | z.ZodEffects<z.ZodEffects<z.ZodString>>
   ) =>
-  (value: string): string | Error | undefined => {
-    const result = schema.safeParse(value);
-    if (!result.success) {
-      return result.error.message;
-    }
+    (value: string): string | Error | undefined => {
+      const result = schema.safeParse(value);
+      if (!result.success) {
+        return result.error.message;
+      }
 
-    return undefined;
-  };
+      return undefined;
+    };
 
 intro("Label Explainer 🪄");
 
@@ -33,6 +33,10 @@ const action = await select({
     {
       value: "explain-stance-labels-tweets",
       label: "Explain Stance Labels in Tweets",
+    },
+    {
+      value: "classify-and-explain-stance-tweets",
+      label: "Classify and Explain Stance Labels in Tweets",
     },
   ],
 });
@@ -71,9 +75,8 @@ switch (action) {
       .transform((value) => fs.readFileSync(value, "utf-8"))
       .parse(
         await text({
-          message: `Enter the dataset path.\n The dataset should be a ${
-            fileFormat === "csv" ? "," : "\\t"
-          }-separated file.`,
+          message: `Enter the dataset path.\n The dataset should be a ${fileFormat === "csv" ? "," : "\\t"
+            }-separated file.`,
           validate: validateWithZod(
             z
               .string()
@@ -139,6 +142,120 @@ ${batch.map(({ text, label }) => `${text}\t${label}`).join("\n")}`,
     spin.stop();
 
     fs.writeFileSync(`results-${target}-${language}.tsv`, results.join("\n"));
+
+    break;
+  }
+  case "classify-and-explain-stance-tweets": {
+    const target = z.string().parse(
+      await text({
+        message: "Enter the target.",
+        validate: validateWithZod(z.string().min(1)),
+      })
+    );
+
+    const language = z.enum(["portuguese", "english"]).parse(
+      await select({
+        message: "Enter the language of the dataset.",
+        options: [
+          { value: "portuguese", label: "Portuguese" },
+          { value: "english", label: "English" },
+        ],
+      })
+    );
+
+    const fileFormat = z.enum(["csv", "tsv"]).parse(
+      await select({
+        message: "Enter the file format.",
+        options: [
+          { value: "csv", label: "CSV" },
+          { value: "tsv", label: "TSV" },
+        ],
+      })
+    );
+
+    const dataset = z
+      .string()
+      .transform((value) => fs.readFileSync(value, "utf-8"))
+      .parse(
+        await text({
+          message: `Enter the dataset path.\n The dataset should be a ${fileFormat === "csv" ? "," : "\\t"
+            }-separated file with only a text column.`,
+          validate: validateWithZod(
+            z
+              .string()
+              .refine((value) => fs.existsSync(value), "Dataset does not exist")
+          ),
+        })
+      );
+
+    const batches: { text: string }[][] = [[]];
+    let lineCount = 0;
+    let batchIndex = 0;
+    for (const line of dataset.split("\n")) {
+      if (line.trim()) {
+        const text = line.split(fileFormat === "csv" ? "," : "\t")[0];
+        batches[batchIndex].push({ text });
+        lineCount++;
+        if (lineCount === BATCH_SIZE) {
+          batchIndex++;
+          batches.push([]);
+          lineCount = 0;
+        }
+      }
+    }
+
+    const promises = batches.map(async (batch) => {
+      const { text } = await generateText({
+        model,
+        prompt: `
+**Objective:** To classify tweets as "for" or "against" a specific target and provide clear explanations for each classification.
+
+**Input:** You will be provided with a list of tweets about **${target}**.
+
+**Output:** Your task is to generate a TSV (tab-separated values) output with the following columns: \`text\`, \`label\`, and \`label_explanation\`.
+
+**Classification Guidelines:**
+
+* **"against" Label:** A tweet should be labeled "against" if it expresses:
+  - Negative sentiment, criticism, or opposition towards **${target}**
+  - Disagreement with policies, actions, or statements related to **${target}**
+  - Mocking, sarcasm, or ridicule directed at **${target}**
+  - Expressions of disappointment, anger, or frustration about **${target}**
+  - Calls for removal, replacement, or cessation of **${target}**
+
+* **"for" Label:** A tweet should be labeled "for" if it expresses:
+  - Positive sentiment, support, or endorsement of **${target}**
+  - Agreement with policies, actions, or statements of **${target}**
+  - Praise, admiration, or celebration of **${target}**
+  - Defense of **${target}** against criticism
+  - Expressions of hope, satisfaction, or gratitude related to **${target}**
+
+**Your generated \`label_explanation\` should:**
+
+1. **Quote specific words or phrases** from the tweet that indicate the stance
+2. **Clearly connect the evidence to the classification** - explain why these elements indicate "for" or "against"
+3. **Be concise** - aim for 1-2 sentences maximum
+4. **Remain objective** - explain the stance without personal judgment
+5. **Be written in ${language}**
+6. **Consider context and tone** - detect sarcasm, irony, or implicit meanings
+
+**Example Output Format:**
+text\tlabel\tlabel_explanation
+
+**Input Tweets:**
+${batch.map(({ text }) => text).join("\n")}
+
+**Important:** Return ONLY the TSV format with no additional text or headers. Each line should contain exactly: tweet_text[TAB]label[TAB]explanation`,
+      });
+
+      return text;
+    });
+
+    spin.start("Classifying and generating explanations...");
+    const results = await Promise.all(promises);
+    spin.stop();
+
+    fs.writeFileSync(`classified-${target}-${language}.tsv`, results.join("\n"));
 
     break;
   }
