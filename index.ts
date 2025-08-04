@@ -1,4 +1,4 @@
-import { intro, outro, select, spinner, text } from "@clack/prompts";
+import { intro, outro, select, spinner, text, log } from "@clack/prompts";
 import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import fs from "fs";
@@ -77,6 +77,10 @@ const action = await select({
     {
       value: "classify-and-explain-stance-tweets",
       label: "Classify and Explain Stance Labels in Tweets",
+    },
+    {
+      value: "measure-classification-accuracy",
+      label: "Measure Classification Accuracy",
     },
   ],
 });
@@ -386,6 +390,139 @@ ${batch.map(({ text }) => text).join("\n")}
     }
 
     await writeExcelFile(`classified-${target}-${language}.xlsx`, allResults);
+
+    break;
+  }
+  case "measure-classification-accuracy": {
+    const originalDatasetPath = z.string().parse(
+      await text({
+        message: "Enter the original dataset path (Excel file with text and actual labels).",
+        validate: validateWithZod(
+          z
+            .string()
+            .refine((value) => fs.existsSync(value), "Original dataset does not exist")
+            .refine((value) => value.endsWith('.xlsx'), "Original dataset must be an Excel file (.xlsx)")
+        ),
+      })
+    );
+
+    const classifiedResultsPath = z.string().parse(
+      await text({
+        message: "Enter the classified results path (Excel file from classify action).",
+        validate: validateWithZod(
+          z
+            .string()
+            .refine((value) => fs.existsSync(value), "Classified results file does not exist")
+            .refine((value) => value.endsWith('.xlsx'), "Classified results must be an Excel file (.xlsx)")
+        ),
+      })
+    );
+
+    spin.start("Reading datasets and calculating accuracy...");
+
+    const originalWorkbook = new ExcelJS.Workbook();
+    await originalWorkbook.xlsx.readFile(originalDatasetPath);
+    const originalWorksheet = originalWorkbook.getWorksheet(1);
+
+    const originalData: { text: string, actualLabel: string }[] = [];
+    originalWorksheet?.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        const text = row.getCell(1).value?.toString() || "";
+        const actualLabel = row.getCell(3).value?.toString() || "";
+        if (text && actualLabel) {
+          originalData.push({ text: text.trim(), actualLabel: actualLabel.toLowerCase().trim() });
+        }
+      }
+    });
+
+    const classifiedWorkbook = new ExcelJS.Workbook();
+    await classifiedWorkbook.xlsx.readFile(classifiedResultsPath);
+    const classifiedWorksheet = classifiedWorkbook.getWorksheet(1);
+
+    const classifiedData: { text: string, predictedLabel: string }[] = [];
+    classifiedWorksheet?.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        const text = row.getCell(1).value?.toString() || "";
+        const predictedLabel = row.getCell(2).value?.toString() || "";
+        if (text && predictedLabel) {
+          classifiedData.push({ text: text.trim(), predictedLabel: predictedLabel.toLowerCase().trim() });
+        }
+      }
+    });
+
+    const classifiedMap = new Map<string, string>();
+    classifiedData.forEach(item => {
+      classifiedMap.set(item.text, item.predictedLabel);
+    });
+
+    let totalCorrect = 0;
+    let totalSamples = 0;
+    const labelStats: { [label: string]: { total: number, correct: number } } = {};
+    const confusionMatrix: { [actualLabel: string]: { [predictedLabel: string]: number } } = {};
+
+    for (const original of originalData) {
+      const predictedLabel = classifiedMap.get(original.text);
+
+      if (predictedLabel !== undefined) {
+        totalSamples++;
+
+        if (!labelStats[original.actualLabel]) {
+          labelStats[original.actualLabel] = { total: 0, correct: 0 };
+        }
+        labelStats[original.actualLabel].total++;
+
+        if (!confusionMatrix[original.actualLabel]) {
+          confusionMatrix[original.actualLabel] = {};
+        }
+        if (!confusionMatrix[original.actualLabel][predictedLabel]) {
+          confusionMatrix[original.actualLabel][predictedLabel] = 0;
+        }
+        confusionMatrix[original.actualLabel][predictedLabel]++;
+
+        if (original.actualLabel === predictedLabel) {
+          totalCorrect++;
+          labelStats[original.actualLabel].correct++;
+        }
+      }
+    }
+
+    spin.stop();
+
+    log.message("📊 CLASSIFICATION ACCURACY REPORT");
+    log.message("=".repeat(50));
+
+    const overallAccuracy = totalSamples > 0 ? (totalCorrect / totalSamples * 100).toFixed(2) : "0.00";
+    log.success(`🎯 Overall Accuracy: ${overallAccuracy}% (${totalCorrect}/${totalSamples})`);
+
+    log.message("📈 Accuracy by Label:");
+    log.message("-".repeat(30));
+    for (const [label, stats] of Object.entries(labelStats)) {
+      const accuracy = stats.total > 0 ? (stats.correct / stats.total * 100).toFixed(2) : "0.00";
+      log.info(`  ${label.toUpperCase()}: ${accuracy}% (${stats.correct}/${stats.total})`);
+    }
+
+    log.message("🔀 Confusion Matrix:");
+    log.message("-".repeat(30));
+    const allLabels = [...new Set([...Object.keys(confusionMatrix), ...Object.values(confusionMatrix).flatMap(row => Object.keys(row))])];
+
+    let confusionMatrixOutput = "Actual \\ Predicted".padEnd(20);
+    allLabels.forEach(label => {
+      confusionMatrixOutput += label.padEnd(10);
+    });
+    confusionMatrixOutput += "\n";
+
+    allLabels.forEach(actualLabel => {
+      confusionMatrixOutput += actualLabel.padEnd(20);
+      allLabels.forEach(predictedLabel => {
+        const count = confusionMatrix[actualLabel]?.[predictedLabel] || 0;
+        confusionMatrixOutput += count.toString().padEnd(10);
+      });
+      confusionMatrixOutput += "\n";
+    });
+
+    log.message(confusionMatrixOutput);
+    log.message("=".repeat(50));
+    log.info(`📝 Summary: Analyzed ${totalSamples} samples with ${totalCorrect} correct predictions`);
 
     break;
   }
