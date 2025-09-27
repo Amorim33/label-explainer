@@ -177,4 +177,5 @@ dist
 # Input/Output files
 *.csv
 *.tsv
-*.xlsx
+dataset/
+train_test/

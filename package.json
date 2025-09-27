@@ -3,7 +3,10 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
-    "start": "bun run --watch index.ts"
+    "process": "bun run src/process.ts",
+    "compare": "bun run src/compare.ts",
+    "find-missing": "bun run src/find-missing.ts",
+    "retry-missing": "bun run src/retry-missing.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -12,9 +15,10 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@ai-sdk/google": "^1.2.19",
+    "@ai-sdk/google": "^2.0.16",
+    "@ai-sdk/openai": "^2.0.35",
     "@clack/prompts": "^0.11.0",
-    "ai": "^4.3.16",
+    "ai": "^5.0.52",
     "exceljs": "^4.4.0",
     "zod": "^3.25.67"
   }
